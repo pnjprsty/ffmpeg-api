@@ -1,0 +1,28 @@
+version: '3.9'
+
+services:
+  ffmpeg-api:
+    build: .
+    container_name: ffmpeg-video-renderer
+    # Run with specific UID/GID to match host permissions
+    user: "1000:1000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - /home/gli-panji/generated-images:/home/gli-panji/generated-images:ro
+      # Volume mount for output directory with explicit permissions
+      # Ensure host directory has correct ownership: chown 1000:1000 ./output
+      - ./output:/output:rw
+    environment:
+      OUTPUT_DIR: /output
+      RENDER_TIMEOUT: 300
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    # Ensure output directory exists on host before container starts
+    # This is handled by docker-compose but we document it here
+    # Run: mkdir -p ./output && chmod 755 ./output && chown 1000:1000 ./output

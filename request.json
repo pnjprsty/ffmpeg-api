@@ -1,0 +1,17 @@
+{
+  "ide": "example-video-001",
+  "scenes": [
+    {
+      "type": "hook",
+      "image": "/home/gli-panji/generated-images/tipsbijak/tipsbijak-2026-08-12_223143.jpg",
+      "voice": "/home/gli-panji/generated-images/tipsbijak/tipsbijak-voice-2026-08-12_223145.mp3",
+      "subtitleText": "Teman sering minta pinjam uang, tapi lupa bayar?"
+    },
+    {
+      "type": "context",
+      "image": "/home/gli-panji/generated-images/tipsbijak/tipsbijak-2026-08-12_223150.jpg",
+      "voice": "/home/gli-panji/generated-images/tipsbijak/tipsbijak-voice-2026-08-12_223151.mp3",
+      "subtitleText": "Mengingatkan tentang utang bisa terasa canggung"
+    }
+  ]
+}

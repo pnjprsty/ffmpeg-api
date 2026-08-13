@@ -1,0 +1,44 @@
+[Unit]
+Description=FFmpeg Video Renderer API
+After=network.target
+
+[Service]
+Type=simple
+User=ffmpeg-api
+Group=ffmpeg-api
+WorkingDirectory=/opt/ffmpeg-api
+
+# Python virtual environment (if used)
+# Environment="PATH=/opt/ffmpeg-api/venv/bin:$PATH"
+
+ExecStart=/usr/local/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+Restart=always
+RestartSec=10
+StartLimitInterval=60s
+StartLimitBurst=3
+
+# Output directory configuration
+ReadWritePaths=/output
+StateDirectory=ffmpeg-api
+RuntimeDirectory=ffmpeg-api
+RuntimeDirectoryMode=0755
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ffmpeg-api
+
+# Security settings - strict but allows /output write access
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
