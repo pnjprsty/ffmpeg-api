@@ -1,6 +1,7 @@
 import logging
 import tempfile
 import asyncio
+import math
 from pathlib import Path
 from typing import List, Dict, Tuple
 import shutil
@@ -64,8 +65,10 @@ class VideoRenderer:
         scene_durations = []
         for i, scene in enumerate(scenes):
             duration = await asyncio.to_thread(get_audio_duration, scene.voice)
+            # Use actual voice duration with full precision (no rounding)
+            # Voice duration is the source of truth for scene duration
             scene_durations.append(duration)
-            logger.info(f"[Render] Scene {i+1}/{len(scenes)} - Duration: {duration:.2f}s")
+            logger.info(f"[Render] Scene {i+1}/{len(scenes)} - Duration: {duration}s (precision: {duration} ms)")
         
         # Create individual scene videos with subtitles
         scene_videos = []
@@ -145,7 +148,7 @@ class VideoRenderer:
             # Check both constraints:
             # 1. Less than 3 words (or exactly 3)
             # 2. Total characters <= 20
-            if len(current_line) < 3 and len(test_line) <= 20:
+            if len(current_line) <= 3 and len(test_line) <= 20:
                 current_line.append(word)
             else:
                 # Can't add this word to current line
@@ -252,24 +255,16 @@ class VideoRenderer:
         logger.info(f"[Render]   Formatted: {repr(formatted_subtitle)}")
         logger.info(f"[Render]   Escaped: {repr(escaped_text)}")
         
-        # Ken Burns effect parameters
-        zoom_start = 1.0
-        zoom_end = 1.05  # Subtle 5% zoom in
-        pan_x = 0.0  # No horizontal pan
-        pan_y = 0.02  # Slight vertical movement
-        
         # Filter components: scale proportionally without cropping, then pad to 1080x1920
         # Step 1: Scale image proportionally without exceeding canvas, keeping aspect ratio
         # Step 2: Add padding with black background to reach final dimensions
-        # Step 3: Apply Ken Burns zoom effect
-        # Step 4: Apply subtitle on top of final canvas, centered with x=(w-text_w)/2
+        # Step 3: No Ken Burns effect - image remains static during entire scene duration
+        # Step 4: Apply subtitle on top of final canvas, centered horizontally
+        # Note: Using fix_bounds=1 to ensure text stays within bounds and is centered
+        # Use -t duration for time-based output control with full precision
         font_filter = (
             f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=decrease,"
             f"pad={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=black,"
-            f"zoompan=z='zoom+({zoom_end}-{zoom_start})/{duration}':"
-            f"x='iw/2-(iw/zoom/2)+{pan_x}*t/{duration}':"
-            f"y='ih/2-(ih/zoom/2)+{pan_y}*t/{duration}':"
-            f"d={int(duration*FPS)}:s={OUTPUT_WIDTH}x{OUTPUT_HEIGHT},"
             f"fps={FPS},"
             f"drawtext=fontfile={SUBTITLE_FONT}:"
             f"text='{escaped_text}':"
@@ -283,6 +278,7 @@ class VideoRenderer:
             f"box=1:"
             f"boxcolor=black@0.3:"
             f"boxborderw=10:"
+            f"fix_bounds=1:"
             f"x=(w-text_w)/2:"
             f"y=h-text_h-100"
         )
@@ -327,6 +323,7 @@ class VideoRenderer:
         escaped_text = self._escape_text_for_ffmpeg(formatted_subtitle)
         
         # Simple filter without zoom effect - scale proportionally and pad with black background
+        # Using fix_bounds=1 to ensure text stays within bounds and is centered
         simple_filter = (
             f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=decrease,"
             f"pad={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=black,"
@@ -334,7 +331,7 @@ class VideoRenderer:
             f"drawtext=fontfile={SUBTITLE_FONT}:"
             f"text='{escaped_text}':"
             f"fontcolor=white:"
-            f"fontsize=60:"
+            f"fontsize=52:"
             f"borderw=3:"
             f"bordercolor=black:"
             f"shadowcolor=black:"
@@ -343,6 +340,7 @@ class VideoRenderer:
             f"box=1:"
             f"boxcolor=black@0.3:"
             f"boxborderw=10:"
+            f"fix_bounds=1:"
             f"x=(w-text_w)/2:"
             f"y=h-text_h-100"
         )
@@ -380,6 +378,13 @@ class VideoRenderer:
         """
         logger.info("[Render] Concatenating scenes with transitions")
         
+        # DEBUG: Log detailed scene information
+        logger.info(f"[Concat] Number of scenes: {len(scene_videos)}")
+        for idx, (video, duration) in enumerate(zip(scene_videos, scene_durations)):
+            logger.info(f"[Concat] Scene {idx+1}: {Path(video).name} (duration: {duration}s)")
+        logger.info(f"[Concat] Scene list includes scene_008.mp4: {'scene_008.mp4' in ' '.join(scene_videos)}")
+        logger.info(f"[Concat] Total duration sum: {sum(scene_durations)}s")
+        
         # Transition types (cycle through them)
         transitions = ["fade", "smoothleft", "fadeblack", "smoothright", "circleopen"]
         
@@ -409,11 +414,17 @@ class VideoRenderer:
             # First video
             filter_parts.append(f"[0:v]setpts=PTS-STARTPTS[v0]")
             
-            # Build transition chain
+            # Build transition chain with proper offset calculation
             current_output = "v0"
             for i in range(1, num_videos):
                 transition = transitions[(i - 1) % len(transitions)]
-                offset = sum(scene_durations[:i]) - (i * TRANSITION_DURATION)
+                # Offset is at the END of the previous scene (duration_sum - transition_duration)
+                # This ensures transition starts at the boundary without cumulative reduction
+                # For scene i, the previous scenes end at sum(scene_durations[:i])
+                # Transition should start at: sum(scene_durations[:i]) - TRANSITION_DURATION
+                offset = sum(scene_durations[:i]) - TRANSITION_DURATION
+                
+                logger.info(f"[Concat] Transition {i}: scene_{i-1:03d} + scene_{i:03d}, offset={offset}s (end_time_prev_scenes={sum(scene_durations[:i])}s), transition={transition}")
                 
                 filter_parts.append(
                     f"[{current_output}][{i}:v]xfade="
@@ -437,28 +448,34 @@ class VideoRenderer:
         filter_complex = ";".join(filter_parts)
         
         # Complete FFmpeg command
+        # Target output duration should match total voice duration (no reduction for transitions)
+        target_duration = sum(scene_durations)
+        
         cmd.extend([
             "-filter_complex", filter_complex,
             "-map", "[v_out]",
             "-map", "[a_out]",
+            "-t", str(target_duration),  # Preserve full voice duration
             "-c:v", "libx264",
             "-c:a", "aac",
             "-b:a", "192k",
             "-pix_fmt", "yuv420p",
             "-preset", "medium",
             "-crf", "23",
-            "-shortest",
             str(output_path)
         ])
         
         # Log the command for debugging
-        logger.debug(f"FFmpeg filter_complex: {filter_complex}")
+        logger.info(f"[Concat] Filter parts count: {len(filter_parts)}")
+        for idx, part in enumerate(filter_parts):
+            logger.info(f"[Concat] Filter {idx}: {part}")
+        logger.info(f"[Concat] FFmpeg filter_complex: {filter_complex}")
+        logger.info(f"[Concat] Target duration: {target_duration}s")
+        logger.info(f"[Concat] FFmpeg command inputs: {num_videos} videos + {num_audios} audios")
         
         run_ffmpeg_command(cmd, timeout=300)
         
-        # Calculate total duration
+        # Return total duration (sum of all scene durations without reduction)
         total_duration = sum(scene_durations)
-        if len(scene_durations) > 1:
-            total_duration -= (len(scene_durations) - 1) * TRANSITION_DURATION
         
         return total_duration
