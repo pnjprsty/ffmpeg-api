@@ -117,10 +117,14 @@ class VideoRenderer:
         """
         Format subtitle text with:
         1. Maximum 3 words per line
-        2. Maximum 20 characters per line (including spaces)
-        3. If 3 words exceed 20 chars, use max 2 words
-        4. Each line centered horizontally based on its width
+        2. Maximum character limit per line considering horizontal margins (50-100px from each side)
+        3. If 3 words exceed character limit, use max 2 words
+        4. Each line is formatted for wrapping within available width
         5. Line breaks before rendering
+        
+        Video dimensions: 1080px width
+        Horizontal margins: 75px from left and right (total usable width ~930px)
+        With font size 60 and typical character width ~35px, max ~26 characters per line
         
         Example:
         Input: "Teman sering minta pinjam uang tapi lupa bayar"
@@ -135,9 +139,15 @@ class VideoRenderer:
         # Clean up extra whitespace - preserve word boundaries with punctuation
         words = text.strip().split()
         
+        # Calculate max characters per line accounting for horizontal margins
+        # Video width: 1080px, margins: 75px each side = 930px usable width
+        # With fontsize 60, approximate character width is ~35px
+        # Max chars per line: ~26 (conservative to prevent overflow)
+        MAX_CHARS_PER_LINE = 26
+        
         # Group words into lines following rules:
         # - Max 3 words per line
-        # - Max 20 characters per line (including spaces)
+        # - Max character limit per line (26 chars with margins considered)
         # - Don't break words
         lines = []
         current_line = []
@@ -147,8 +157,8 @@ class VideoRenderer:
             
             # Check both constraints:
             # 1. Less than 3 words (or exactly 3)
-            # 2. Total characters <= 20
-            if len(current_line) <= 3 and len(test_line) <= 20:
+            # 2. Total characters <= MAX_CHARS_PER_LINE
+            if len(current_line) < 3 and len(test_line) <= MAX_CHARS_PER_LINE:
                 current_line.append(word)
             else:
                 # Can't add this word to current line
@@ -259,9 +269,16 @@ class VideoRenderer:
         # Step 1: Scale image proportionally without exceeding canvas, keeping aspect ratio
         # Step 2: Add padding with black background to reach final dimensions
         # Step 3: No Ken Burns effect - image remains static during entire scene duration
-        # Step 4: Apply subtitle on top of final canvas, centered horizontally
-        # Note: Using fix_bounds=1 to ensure text stays within bounds and is centered
+        # Step 4: Apply subtitle on top of final canvas, positioned at TOP with margin constraints
+        # Positioning strategy:
+        # - Vertical (y): 100px from TOP of video
+        # - Horizontal (x): Centered with 75px margins from left and right (930px usable width)
+        # - Using fix_bounds=1 to ensure text stays within bounds and respects margins
         # Use -t duration for time-based output control with full precision
+        
+        # Horizontal positioning: center the text within available width (75px margin each side)
+        # x = (w - text_w) / 2 centers based on full width
+        # fix_bounds=1 ensures text doesn't go outside video bounds
         font_filter = (
             f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=decrease,"
             f"pad={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=black,"
@@ -277,10 +294,10 @@ class VideoRenderer:
             f"shadowy=2:"
             f"box=1:"
             f"boxcolor=black@0.3:"
-            f"boxborderw=10:"
+            f"boxborderw=30:"
             f"fix_bounds=1:"
             f"x=(w-text_w)/2:"
-            f"y=h-text_h-100"
+            f"y=1300"
         )
         
         # FFmpeg command for creating scene video with image, ken burns, and subtitle
@@ -323,7 +340,10 @@ class VideoRenderer:
         escaped_text = self._escape_text_for_ffmpeg(formatted_subtitle)
         
         # Simple filter without zoom effect - scale proportionally and pad with black background
-        # Using fix_bounds=1 to ensure text stays within bounds and is centered
+        # Positioned at TOP with horizontal margins (same as main filter)
+        # - Vertical (y): 100px from TOP of video
+        # - Horizontal (x): Centered with 75px margins (930px usable width)
+        # - Using fix_bounds=1 to ensure text stays within bounds and respects margins
         simple_filter = (
             f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=decrease,"
             f"pad={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=black,"
@@ -342,7 +362,7 @@ class VideoRenderer:
             f"boxborderw=10:"
             f"fix_bounds=1:"
             f"x=(w-text_w)/2:"
-            f"y=h-text_h-100"
+            f"y=100"
         )
         
         cmd = [
